@@ -17,7 +17,7 @@
 package com.apps.healpix
 
 // Import SparkSession
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.functions._
 
 // Import the implicit to allow interaction with FITS
@@ -35,10 +35,13 @@ import org.apache.log4j.Logger
 // Internal imports
 import com.apps.healpix.Utils._
 
+case class JobContext(session: SparkSession, grid: HealpixGrid, df_index: Dataset[Point3D])
+
 object HealpixProjection {
 
-  val usage =
-    """
+  def initialize(catalogFilename : String, nside : Int) = {
+    val usage =
+      """
     Usage: HealpixProjection <catalogFilename> <nside>
 
     // Distribute the catalog.fits on a healpix grid at nside=512
@@ -46,21 +49,16 @@ object HealpixProjection {
 
     """
 
-  // Set to Level.WARN is you want verbosity
-  Logger.getLogger("org").setLevel(Level.OFF)
-  Logger.getLogger("akka").setLevel(Level.OFF)
+    // Set to Level.WARN is you want verbosity
+    Logger.getLogger("org").setLevel(Level.OFF)
+    Logger.getLogger("akka").setLevel(Level.OFF)
 
-  // Initialise your SparkSession
-  val spark = SparkSession
-    .builder()
-    .getOrCreate()
+    // Initialise your SparkSession
+    val session = SparkSession
+      .builder()
+      .getOrCreate()
 
-  import spark.implicits._
-
-  def main(args : Array[String]) = {
-
-    val catalogFilename : String = args(0)
-    val nside : Int = args(1).toInt
+    import session.implicits._
 
     // Initialise the Pointing object
     var ptg = new ExtPointing
@@ -72,7 +70,7 @@ object HealpixProjection {
     val grid = HealpixGrid(nside, hp, ptg)
 
     // Data
-    val df = spark.readfits
+    val df = session.readfits
       .option("datatype", "table")
       .option("HDU", 1)
       .load(catalogFilename)
@@ -80,6 +78,14 @@ object HealpixProjection {
     // Select Ra, Dec, Z
     val df_index = df.select($"RA", $"Dec", ($"Z_COSMO").as("z"))
       .as[Point3D]
+
+    // df_index.cache()
+
+    JobContext(session, grid, df_index)
+  }
+
+  def job1(jc: JobContext) = {
+    import jc.session.implicits._
 
     // Redshift boundaries
     val redList = List(0.1, 0.2, 0.3, 0.4, 0.5)
@@ -91,10 +97,40 @@ object HealpixProjection {
     for (pos <- shells) {
       val start = pos._1
       val stop = pos._2
-      df_index.filter(x => x.z >= start && x.z < stop) // filter in redshift space
-        .map(x => (grid.index(dec2theta(x.dec), ra2phi(x.ra) ), 1) ) // index
+      jc.df_index.filter(x => x.z >= start && x.z < stop) // filter in redshift space
+        .map(x => (jc.grid.index(dec2theta(x.dec), ra2phi(x.ra) ), 1) ) // index
         .groupBy("_1").agg(sum($"_2")) // group by pixel index and make an histogram
         .coalesce(1).rdd.saveAsTextFile(s"output_redshift_${start}_${stop}/")
     }
+  }
+
+
+  def job2(jc: JobContext) = {
+    import jc.session.implicits._
+
+    // Redshift boundaries
+    val redList = List(0.1, 0.2, 0.3, 0.4, 0.5)
+
+    // Make shells
+    val shells = redList.slice(0, redList.size-1).zip(redList.slice(1, redList.size))
+
+    // Loop over shells, make an histogram, and save results.
+    for (pos <- shells) {
+      val start = pos._1
+      val stop = pos._2
+      jc.df_index.filter(x => x.z >= start && x.z < stop) // filter in redshift space
+        .map(x => (jc.grid.index(dec2theta(x.dec), ra2phi(x.ra) ), 1) ) // index
+        .groupBy("_1") // group by pixel index
+        // .filter()
+    }
+  }
+  def main(args : Array[String]) = {
+
+    val catalogFilename : String = args(0)
+    val nside : Int = args(1).toInt
+
+    val jc = initialize(catalogFilename, nside)
+
+    job1(jc)
   }
 }

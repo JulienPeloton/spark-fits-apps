@@ -29,7 +29,15 @@ SF=lib/spark-fits_2.11-0.2.0.jar
 HP=lib/jhealpix.jar
 
 # Parameters (put your file)
-fitsfn="hdfs://134.158.75.222:8020//user/julien.peloton/cat2149.fits"
+
+f1="fits_134217728.fits"
+f2="fits_268435456.fits"
+f3="fits_536870912.fits"
+f4="cat2149.fits"
+f5="test3.fits"
+f6="test.fits"
+
+fitsfn="hdfs://134.158.75.222:8020//user/julien.peloton/${f4}"
 nside=512
 
 # Run it!
