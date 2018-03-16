@@ -36,11 +36,13 @@ f3="fits_536870912.fits"
 f4="cat2149.fits"
 f5="test3.fits"
 f6="test.fits"
+f7="LSST1Y"
 
-fitsfn="hdfs://134.158.75.222:8020//user/julien.peloton/${f4}"
+fitsfn="hdfs://134.158.75.222:8020//user/julien.peloton/${f7}"
 nside=512
 
 # Run it!
+hdfs dfs -rm -r "output_redshift_*"
 spark-submit \
   --master spark://134.158.75.222:7077 \
   --driver-memory 4g --executor-memory 18g --executor-cores 17 --total-executor-cores 102 \

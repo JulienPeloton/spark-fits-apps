@@ -34,10 +34,25 @@ import org.apache.log4j.Logger
 
 // Internal imports
 import com.apps.healpix.Utils._
+import com.apps.healpix._
 
 case class JobContext(session: SparkSession, grid: HealpixGrid, df_index: Dataset[Point3D])
 
 object HealpixProjection {
+
+  def time[R](text: String, block: => R): R = {
+    val t0 = System.nanoTime()
+    val result = block
+    val t1 = System.nanoTime()
+
+    var dt:Double = (t1 - t0).asInstanceOf[Double] / 1000000000.0
+
+    val unit = "S"
+
+    println("\n" + text + "> Elapsed time:" + " " + dt + " " + unit)
+
+    result
+  }
 
   def initialize(catalogFilename : String, nside : Int) = {
     val usage =
@@ -79,7 +94,7 @@ object HealpixProjection {
     val df_index = df.select($"RA", $"Dec", ($"Z_COSMO").as("z"))
       .as[Point3D]
 
-    // df_index.cache()
+    df_index.cache()
 
     JobContext(session, grid, df_index)
   }
@@ -104,33 +119,58 @@ object HealpixProjection {
     }
   }
 
-
   def job2(jc: JobContext) = {
     import jc.session.implicits._
 
     // Redshift boundaries
-    val redList = List(0.1, 0.2, 0.3, 0.4, 0.5)
+    // val redList = List(0.1, 0.2, 0.3, 0.4, 0.5)
 
     // Make shells
-    val shells = redList.slice(0, redList.size-1).zip(redList.slice(1, redList.size))
+    // val shells = redList.slice(0, redList.size-1).zip(redList.slice(1, redList.size))
+
+    var ptg = new ExtPointing
+    ptg.phi = 0.0
+    ptg.theta = 0.0
+    val radius = 0.02
+
+    val selectedPixels = jc.grid.hp.queryDiscInclusive(ptg, radius, 4).toArray
+    print(selectedPixels.length)
+
+    val sp = jc.session.sparkContext.broadcast(selectedPixels)
+
+    var counts = Array[Int]()
+
+    val firstShell = 0.1
+    val lastShell = 0.5
+    val shells:Int = 100
+    val d:Double = (lastShell - firstShell) / shells
 
     // Loop over shells, make an histogram, and save results.
-    for (pos <- shells) {
-      val start = pos._1
-      val stop = pos._2
-      jc.df_index.filter(x => x.z >= start && x.z < stop) // filter in redshift space
-        .map(x => (jc.grid.index(dec2theta(x.dec), ra2phi(x.ra) ), 1) ) // index
-        .groupBy("_1") // group by pixel index
+    for (shell <- 0 to shells) {
+      val start = firstShell + shell*d
+      val stop = start + d
+      var c = jc.df_index.filter(x => x.z >= start && x.z < stop) // filter in redshift space
+        .map(x => (jc.grid.index(dec2theta(x.dec), ra2phi(x.ra) ), x) ) // index
+        .filter(x => sp.value.contains(x._1)) // select pixels touching the selected disk
+        .map(x => x._2) // consider all points inside the disk
+        .count
         // .filter()
+      counts :+= c.toInt
+      print(s"count=${c.toInt}\n")
     }
+
+    counts.toString
   }
-  def main(args : Array[String]) = {
+
+  def main(args : Array[String]): Unit = {
 
     val catalogFilename : String = args(0)
     val nside : Int = args(1).toInt
 
-    val jc = initialize(catalogFilename, nside)
+    val jc = time("Intialize", initialize(catalogFilename, nside))
 
-    job1(jc)
+    // time("job1", job1(jc))
+    val result = time("job2", job2(jc))
+    print(result)
   }
 }
