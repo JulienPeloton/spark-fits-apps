@@ -138,11 +138,11 @@ object HealpixProjection {
 
     val sp = jc.session.sparkContext.broadcast(selectedPixels)
 
-    var counts = Array[Int]()
+    var counts = Array[(Int, Int)]()
 
     val firstShell = 0.1
     val lastShell = 0.5
-    val shells:Int = 100
+    val shells:Int = 10
     val d:Double = (lastShell - firstShell) / shells
 
     // Loop over shells, make an histogram, and save results.
@@ -155,11 +155,38 @@ object HealpixProjection {
         .map(x => x._2) // consider all points inside the disk
         .count
         // .filter()
-      counts :+= c.toInt
-      print(s"count=${c.toInt}\n")
+      counts :+= (shell, c.toInt)
+      print(s"shell=$start count=${c.toInt}\n")
     }
 
-    counts.toString
+    counts
+  }
+
+  def job3(jc: JobContext) = {
+    import jc.session.implicits._
+
+    val firstShell = 0.1
+    val lastShell = 0.5
+    val shells:Int = 10
+    val d:Double = (lastShell - firstShell) / shells
+
+    var ptg = new ExtPointing
+    ptg.phi = 0.0
+    ptg.theta = 0.0
+    val radius = 0.02
+
+    val selectedPixels = jc.grid.hp.queryDiscInclusive(ptg, radius, 4).toArray
+    print(selectedPixels.length)
+
+    val sp = jc.session.sparkContext.broadcast(selectedPixels)
+
+    // start by creating (shell_index, pixel, point)
+    val result = jc.df_index
+      .map(x => ((shells * (x.z - firstShell) / (lastShell - firstShell)).toInt, jc.grid.index(dec2theta(x.dec), ra2phi(x.ra) ), x) )
+      //.select($"_1".alias("shell_index"), $"_2".alias("pixel"), $"_3".alias("point"))
+      .filter(x => sp.value.contains($"_2")) // select pixels touching the selected disk
+      .groupBy($"_2").agg(count($"_3"))
+    print(s"result=$result \n")
   }
 
   def main(args : Array[String]): Unit = {
@@ -170,7 +197,7 @@ object HealpixProjection {
     val jc = time("Intialize", initialize(catalogFilename, nside))
 
     // time("job1", job1(jc))
-    val result = time("job2", job2(jc))
-    print(result)
+    // val result = time("job2", job2(jc))
+    val result = time("job3", job3(jc))
   }
 }
